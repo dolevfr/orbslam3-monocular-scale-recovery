@@ -161,9 +161,8 @@ This avoids holding the map mutex while invoking MapPoint methods that acquire t
     Atlas* GetAtlasPointer() { return mpAtlas; }
     ```
 
-```markdown
 - **`Examples/Monocular/mono_kitti.cc`**
-  - Exports the unscaled map to `map_unscaled.ply` after shutdown
+  - Exports the unscaled map to `map_unscaled.ply` after system shutdown
   - Saves the keyframe trajectory in TUM format
 
 ---
@@ -175,10 +174,6 @@ This avoids holding the map mutex while invoking MapPoint methods that acquire t
 
 cd ORB_SLAM3
 ./build.sh
-
-```
-```
-
 
 ```
 
@@ -220,42 +215,42 @@ s ≈ 12.806
 ```
 
 ### Scripts Used
-- `compute_scale_offline.py`  
-  Finds corresponding MapPoints via reprojection and computes scale.
+- **`compute_scale_offline.py`**  
+  Finds corresponding MapPoints via reprojection and computes the scale factor.
 
-- `apply_scale.py`  
-  Applies scale to:
+- **`apply_scale.py`**  
+  Applies the scale to:
   - all MapPoints → `map_scaled.ply`
   - camera translations → `KeyFrameTrajectory_scaled.tum`
 
-- `verify_scaled_distance.py`  
-  Confirms that the scaled distance between the two points is ≈ 3.7 m.
+- **`verify_scaled_distance.py`**  
+  Confirms that the scaled distance between the two selected points is approximately 3.7 m.
 
 ---
 
 ## Results
 
 - Final recovered scale: **~12.81**
-- Scaled map correctly reproduces lane width
-- Trajectory and point cloud are metric-consistent
+- Scaled map correctly reproduces the lane width
+- Camera trajectory and point cloud are metric-consistent
 - No deadlocks or crashes during execution
-- Offline approach ensures determinism and safety
+- Offline processing ensures determinism and thread safety
 
 ---
 
 ## Notes and Observations
 
-- Pangolin/OpenGL can block on some systems (especially over SSH).  
-  Software rendering can be forced via:
+- Pangolin/OpenGL may block on some systems (especially over SSH or with misconfigured drivers).  
+  Software rendering can be forced using:
 ```
 
 export LIBGL_ALWAYS_SOFTWARE=1
 
 ```
 
-- Different frames or reference points yield slightly different scales due to triangulation noise. Averaging multiple measurements improves robustness.
+- Different frames or reference points can yield slightly different scale estimates due to triangulation noise. Averaging multiple measurements improves robustness.
 
-- Offline scaling was chosen as the **final pipeline** to avoid runtime interference with SLAM threads.
+- Offline scaling was chosen as the **final pipeline** to avoid interference with ORB-SLAM3’s multi-threaded backend.
 
 ---
 
