@@ -1,0 +1,48 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters. Adjust for your sequence.
+# KITTI rectified cam0 (P_rect_00 from calib_cam_to_cam.txt)
+# fx=721.5377 fy=721.5377 cx=609.5593 cy=172.8540
+#--------------------------------------------------------------------------------------------
+
+Camera.type: "PinHole"
+Camera.fx: 721.5377
+Camera.fy: 721.5377
+Camera.cx: 609.5593
+Camera.cy: 172.8540
+
+Camera.k1: 0.0
+Camera.k2: 0.0
+Camera.p1: 0.0
+Camera.p2: 0.0
+Camera.k3: 0.0
+
+Camera.width: 1242
+Camera.height: 375
+Camera.fps: 10.0
+
+Camera.RGB: 1
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+ORBextractor.nFeatures: 2000
+ORBextractor.scaleFactor: 1.2
+ORBextractor.nLevels: 8
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0

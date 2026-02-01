@@ -34,11 +34,85 @@
 #include <mutex>
 #include <chrono>
 
+#include <fstream>
+#include <sstream>
+#include <unordered_map>
+#include <limits>
+#include <iomanip>
+#include <Eigen/Core>
 
 using namespace std;
 
 namespace ORB_SLAM3
 {
+
+struct LaneClick
+{
+    int frame_id = -1;
+    float uL=0, vL=0, uR=0, vR=0;
+    float width_m = 3.7f;
+};
+
+static std::unordered_map<int, LaneClick> g_laneClicks;
+static bool g_laneClicksLoaded = false;
+
+
+static void LoadLaneClicksOnce(const std::string& path)
+{
+    if (g_laneClicksLoaded) return;
+    g_laneClicksLoaded = true;
+
+    std::ifstream in(path);
+    if(!in.is_open()) {
+        std::cerr << "[LaneClicks] Could not open: " << path << std::endl;
+        return;
+    }
+
+    std::string line;
+    while(std::getline(in, line))
+    {
+        if(line.empty() || line[0] == '#') continue;
+        std::istringstream ss(line);
+        LaneClick c;
+        ss >> c.frame_id >> c.uL >> c.vL >> c.uR >> c.vR >> c.width_m;
+        if(ss.fail() || c.frame_id < 0) continue;
+        g_laneClicks[c.frame_id] = c;
+    }
+
+    std::cerr << "[LaneClicks] Loaded " << g_laneClicks.size() << " entries from " << path << std::endl;
+}
+
+static int NearestKeypointWithMapPoint(const Frame& F, float u, float v, float max_pix_dist)
+{
+    const float max_d2 = max_pix_dist * max_pix_dist;
+    float best_d2 = std::numeric_limits<float>::max();
+    int best_i = -1;
+
+    const auto& keys = !F.mvKeysUn.empty() ? F.mvKeysUn : F.mvKeys;
+
+    for (size_t i = 0; i < keys.size(); ++i)
+    {
+        MapPoint* mp = F.mvpMapPoints[i];
+        if(!mp) continue;
+        if(mp->isBad()) continue;
+
+        const float du = keys[i].pt.x - u;
+        const float dv = keys[i].pt.y - v;
+        const float d2 = du*du + dv*dv;
+
+        if(d2 < best_d2 && d2 <= max_d2)
+        {
+            best_d2 = d2;
+            best_i = (int)i;
+        }
+    }
+    return best_i;
+}
+
+static float Norm3(const Eigen::Vector3f& v)
+{
+    return v.norm();
+}
 
 
 Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Atlas *pAtlas, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, Settings* settings, const string &_nameSeq):
@@ -2237,6 +2311,110 @@ void Tracking::Track()
                 delete pMP;
             }
             mlpTemporalPoints.clear();
+
+            // ---- Lane width scale logging (monocular) ----
+            // Offline scaling is used now, so disable online scale logging to avoid any
+            // extra locking / potential races during Tracking.
+            //
+            // To re-enable: set ENABLE_LANE_SCALE_ONLINE to 1 and rebuild.
+            #define ENABLE_LANE_SCALE_ONLINE 0
+
+            #if ENABLE_LANE_SCALE_ONLINE
+
+            LoadLaneClicksOnce("lane_clicks.txt");
+
+            // Frame id: use mnId if it exists (it does in your snippet context)
+            int fid = (int)mCurrentFrame.mnId;
+
+            auto it = g_laneClicks.find(fid);
+            if(it != g_laneClicks.end())
+            {
+                const LaneClick& c = it->second;
+
+                // Snap clicks to nearest keypoints that actually have MapPoints
+                const int idxL = NearestKeypointWithMapPoint(mCurrentFrame, c.uL, c.vL, 80.0f);
+                const int idxR = NearestKeypointWithMapPoint(mCurrentFrame, c.uR, c.vR, 80.0f);
+
+                if(idxL < 0 || idxR < 0)
+                {
+                    std::cerr << "[LaneScale] Frame " << fid
+                            << " could not find MapPoints near one/both clicks (try different pixels or increase radius)"
+                            << std::endl;
+                }
+                else
+                {
+                    // --- Thread-safe map access: try_lock with short retries to snapshot pointers ---
+                    MapPoint* mpL = nullptr;
+                    MapPoint* mpR = nullptr;
+
+                    {
+                        ORB_SLAM3::Map* pMap = mpAtlas->GetCurrentMap();
+
+                        const int max_tries = 10;
+                        const int sleep_ms  = 10;
+                        bool locked = false;
+
+                        std::unique_lock<std::mutex> lock(pMap->mMutexMapUpdate, std::defer_lock);
+                        for(int tries = 0; tries < max_tries; ++tries)
+                        {
+                            if(lock.try_lock()) { locked = true; break; }
+                            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+                        }
+
+                        if(!locked)
+                        {
+                            std::cerr << "[LaneScale] map mutex busy after " << max_tries
+                                    << " tries, skipping scale check for frame " << fid << std::endl;
+                        }
+                        else
+                        {
+                            mpL = mCurrentFrame.mvpMapPoints[idxL];
+                            mpR = mCurrentFrame.mvpMapPoints[idxR];
+
+                            if(!mpL || !mpR || mpL->isBad() || mpR->isBad())
+                            {
+                                std::cerr << "[LaneScale] MapPoints invalid/bad under map lock for frame " << fid << std::endl;
+                                mpL = mpR = nullptr;
+                            }
+                        }
+                    }
+
+                    if(mpL && mpR)
+                    {
+                        const Eigen::Vector3f pL = mpL->GetWorldPos();
+                        const Eigen::Vector3f pR = mpR->GetWorldPos();
+
+                        const float d_slam = Norm3(pL - pR);
+
+                        if(d_slam > 1e-6f)
+                        {
+                            const float scale = c.width_m / d_slam;
+
+                            std::ofstream out("scale_log.txt", std::ios::app);
+                            out << std::fixed << std::setprecision(9)
+                                << fid << " "
+                                << mCurrentFrame.mTimeStamp << " "
+                                << d_slam << " "
+                                << scale << " "
+                                << idxL << " " << idxR << "\n";
+
+                            std::cerr << "[LaneScale] frame=" << fid
+                                    << " d_slam=" << d_slam
+                                    << " scale=" << scale
+                                    << " idxL=" << idxL << " idxR=" << idxR
+                                    << std::endl;
+                        }
+                        else
+                        {
+                            std::cerr << "[LaneScale] d_slam too small/unreliable" << std::endl;
+                        }
+                    }
+                }
+            }
+
+            #endif // ENABLE_LANE_SCALE_ONLINE
+
+
 
 #ifdef REGISTER_TIMES
             std::chrono::steady_clock::time_point time_StartNewKF = std::chrono::steady_clock::now();

@@ -136,6 +136,13 @@ int main(int argc, char **argv)
     // Stop all threads
     SLAM.Shutdown();
 
+    // --- Logging: unscaled trajectories ---
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory_unscaled.tum");
+
+    // If your ORB-SLAM3 build has it (many do), also export KITTI poses:
+    SLAM.SaveTrajectoryKITTI("FrameTrajectory_unscaled.kitti");
+
+
     // Tracking time statistics
     sort(vTimesTrack.begin(),vTimesTrack.end());
     float totaltime = 0;
@@ -148,7 +155,41 @@ int main(int argc, char **argv)
     cout << "mean tracking time: " << totaltime/nImages << endl;
 
     // Save camera trajectory
-    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");    
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+
+    // --- Export unscaled MapPoints to map_unscaled.ply using System getter ---
+    {
+        ORB_SLAM3::Atlas* pAtlas = SLAM.GetAtlasPointer();
+        if(pAtlas)
+        {
+            ORB_SLAM3::Map* pMap = pAtlas->GetCurrentMap();
+            std::unique_lock<std::mutex> lock(pMap->mMutexMapUpdate);
+
+            auto mps = pMap->GetAllMapPoints();
+            std::ofstream fout("map_unscaled.ply");
+            int valid = 0;
+            for(auto mp : mps) if(mp && !mp->isBad()) ++valid;
+
+            fout << "ply\nformat ascii 1.0\n";
+            fout << "element vertex " << valid << "\n";
+            fout << "property float x\nproperty float y\nproperty float z\n";
+            fout << "end_header\n";
+
+            for(auto mp : mps)
+            {
+                if(!mp || mp->isBad()) continue;
+                Eigen::Vector3f p = mp->GetWorldPos();
+                fout << p.x() << " " << p.y() << " " << p.z() << "\n";
+            }
+            fout.close();
+            std::cerr << "[Export] Saved map_unscaled.ply with " << valid << " points\n";
+        }
+        else
+        {
+            std::cerr << "[Export] GetAtlasPointer() returned null\n";
+        }
+    }
+
 
     return 0;
 }
