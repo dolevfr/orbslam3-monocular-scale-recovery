@@ -259,7 +259,7 @@ Modified files (high level):
 - exports unscaled map (`map_unscaled.ply`) after shutdown
 - saves keyframe trajectory to TUM format
 
-## Running the Full Pipeline (Recommended)
+## Running the Full Pipeline
 
 ### 1) Build
 ```
