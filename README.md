@@ -1,35 +1,35 @@
+```markdown
 # ORB-SLAM3 Monocular Scale Recovery with Thread-Safe Map Access
 
 ## Overview
-This project extends ORB-SLAM3 to demonstrate metric scale recovery in monocular SLAM while respecting the system’s multi-threaded map architecture. Monocular SLAM produces a geometrically correct but unitless map; this work recovers a metric scale using user-selected image features with known real-world distances (e.g., standard lane width), evaluated on KITTI.
 
-The end result is a **scaled trajectory** and **scaled point cloud**:
-- `KeyFrameTrajectory_scaled.tum`
-- `map_scaled.ply`
+This project extends **ORB-SLAM3** to recover **metric scale** in a **monocular SLAM** pipeline while respecting the system’s **multi-threaded map architecture**.  
+Monocular SLAM reconstructs geometry correctly but only **up to an unknown scale**. The goal of this work is to compute a scale factor using **user-selected image features with known real-world distances**, and to apply that scale safely to the reconstructed trajectory and map.
+
+All experiments were performed on the **KITTI dataset**, using a wrapped KITTI Raw sequence to match the expected ORB-SLAM3 monocular interface.
 
 ---
 
-## What This Project Solves
+## Problem Statement
 
-### 1) Monocular scale ambiguity (unitless map)
-Monocular SLAM cannot recover absolute scale. ORB-SLAM3 outputs a map and poses up to an unknown scale factor `s`:
+Given two image points with a known real-world distance \( D_{\text{metric}} \), and their corresponding 3D map points reconstructed by ORB-SLAM3, compute a scale factor \( s \) such that:
 
-```
+\[
+P_{\text{metric}} = s \cdot P_{\text{slam}}
+\]
 
-P_metric = s · P_slam
+where \( P_{\text{slam}} \) are the original unitless SLAM coordinates.
 
-```
+The main challenges are:
+1. **Monocular scale ambiguity**
+2. **Thread-safe access to map data in a multi-threaded SLAM system**
+3. **Dataset format mismatch (KITTI Raw vs KITTI Odometry)**
 
-### 2) Thread-safe map access in ORB-SLAM3
-ORB-SLAM3 is multi-threaded. While Tracking runs, the Local Mapper and Loop Closer can modify / optimize / replace / erase MapPoints. Reading 3D map data incorrectly can cause:
-- crashes (reading invalid pointers)
-- inconsistent reads
-- deadlocks (wrong lock ordering)
+---
 
-This project identifies the correct mutex and uses safe access patterns to avoid those issues.
+## Dataset Wrapping (KITTI Raw → Odometry-like)
 
-### 3) KITTI Raw vs KITTI Odometry mismatch (the “wrap” problem)
-The ORB-SLAM3 `mono_kitti` example typically expects KITTI **Odometry-style** layout:
+The `mono_kitti` example in ORB-SLAM3 expects an **odometry-style layout**:
 
 ```
 
@@ -39,237 +39,190 @@ times.txt
 
 ```
 
-KITTI Raw is different:
+KITTI Raw provides:
+```
+
+image_00/data/0000000000.png
+image_00/timestamps.txt   (absolute timestamps)
 
 ```
 
-.../image_00/data/0000000000.png ...
-.../image_00/timestamps.txt   (date strings)
+To avoid modifying ORB-SLAM3 loaders, an **odometry-like wrapper folder** was created:
 
 ```
 
-To run without modifying ORB-SLAM3 loaders, we created an **odometry-like wrapper** directory:
-- `kitti_wrap_drive_0001/image_0/` (images)
-- `kitti_wrap_drive_0001/times.txt` (float timestamps, relative seconds)
+kitti_wrap_drive_0001/
+├── image_0/        (symlinked images)
+└── times.txt       (relative timestamps in seconds)
+
+```
+
+This wrapper allowed `mono_kitti` to run correctly without changes to the dataset parser.
 
 ---
 
-## System Architecture (How ORB-SLAM3 Runs)
+## ORB-SLAM3 Threading Model
 
-ORB-SLAM3 runs multiple threads in parallel:
+ORB-SLAM3 runs multiple threads concurrently:
 
-- **Tracking thread**
-  - reads images
-  - extracts ORB features
-  - matches features
-  - associates keypoints to MapPoints (`Frame::mvpMapPoints`)
-  - creates KeyFrames occasionally
+- **Tracking**  
+  Processes images, extracts features, associates keypoints with MapPoints.
+- **Local Mapping**  
+  Creates, optimizes, replaces, and deletes MapPoints.
+- **Loop Closing**  
+  Performs global pose graph optimization and map corrections.
+- **Viewer (Pangolin)**  
+  Visualizes the map and trajectory.
 
-- **Local Mapping thread**
-  - triangulates new MapPoints
-  - runs local bundle adjustment
-  - culls/merges/replaces points
-
-- **Loop Closing thread**
-  - detects loops
-  - applies global pose-graph / optimization (may replace/cull points)
-
-- **Viewer thread (Pangolin)**
-  - visualizes map and camera poses (can hang if OpenGL issues)
-
-The critical consequence:
-> MapPoints can change while Tracking is running, so extracting 3D data must be synchronized.
+Because MapPoints may be **optimized, replaced, or erased at any time**, accessing 3D map data requires strict synchronization.
 
 ---
 
-## Thread Safety and Locking Strategy
+## Thread Safety and Mutex Handling
 
-### The lock that matters
-Map-level updates are protected by:
-- `Map::mMutexMapUpdate` (the main mutex we use to safely snapshot map data)
+### Relevant Mutex
+- `Map::mMutexMapUpdate`
 
-### Deadlock risk (why we were careful)
-MapPoints also have their own internal mutexes. A common deadlock pattern is:
-- Thread A: lock Map mutex → call MapPoint method (locks MP mutex)
-- Thread B: lock MP mutex → tries to lock Map mutex
-=> deadlock.
+### Deadlock Risk
+Each `MapPoint` also owns an internal mutex.  
+A naïve approach such as:
 
-### Safe pattern used in this project
-- Lock `Map::mMutexMapUpdate` briefly only to **snapshot/validate pointers**
-- Release map lock
-- Then call `MapPoint->GetWorldPos()` (which may take its own internal lock)
+1. Lock Map mutex  
+2. Call `MapPoint::GetWorldPos()` (locks MapPoint mutex)
 
-This avoids holding Map and MapPoint locks simultaneously in the wrong order.
+can deadlock if another thread locks the MapPoint first and then tries to lock the Map.
+
+### Safe Access Pattern Used
+1. Lock `Map::mMutexMapUpdate`
+2. **Snapshot MapPoint pointers and validate `!isBad()`**
+3. Unlock the Map mutex
+4. Read MapPoint world positions
+
+This guarantees:
+- No simultaneous Map + MapPoint lock ordering violations
+- Safe, consistent reads without blocking backend threads
 
 ---
 
-## Project Flow (Top-to-Bottom)
+## Reference Measurement
 
-### Step 0: Build
-```
+The metric reference used in this project was:
 
-cd ORB_SLAM3
-./build.sh
+- **Standard lane width:**  
+  \[
+  D_{\text{metric}} = 3.7 \text{ meters}
+  \]
 
-```
-
-### Step 1: Run ORB-SLAM3 on the wrapper dataset
-This repo includes the wrapper directory inside `ORB_SLAM3` so the run command uses an absolute path:
+Two pixels corresponding to the left and right lane boundaries were manually selected in a chosen frame and stored in:
 
 ```
 
-cd ORB_SLAM3
-./Examples/Monocular/mono_kitti 
-Vocabulary/ORBvoc.txt 
-Examples/Monocular/KITTI_image00.yaml 
-/kitti_wrap_drive_0001
-
-```
-
-Notes:
-- If Pangolin/OpenGL hangs, you can test software rendering:
-```
-
-export LIBGL_ALWAYS_SOFTWARE=1
-
-```
-
-### Step 2: Export unscaled trajectory + map
-After shutdown, the modified example exports:
-- `KeyFrameTrajectory_unscaled.tum`
-- `map_unscaled.ply`
-
-These are in SLAM (unitless) scale.
-
-### Step 3: Provide reference measurement (pixels + known metric distance)
-You manually pick two pixels in a chosen frame where the real-world distance is known.
-
-Examples of allowed reference distances:
-- Standard lane width: **3.7 m**
-- Dashed line length: **3.0 m**
-- Sedan wheelbase: **2.7 m**
-
-These clicks are stored in:
-- `lane_clicks.txt`
-
-### Step 4: Offline scale computation (robust + deterministic)
-We compute the scale factor offline using exported map + trajectory:
-- project MapPoints into the chosen camera/keyframe
-- find the two MapPoints whose projections match the clicked pixels
-- compute:
-```
-
-D_slam = ||P2 - P1||
-s = D_metric / D_slam
+lane_clicks.txt
 
 ````
 
-### Step 5: Apply scale to trajectory and point cloud
-Scale is applied to:
-- all MapPoint coordinates in PLY
-- translation component of poses in TUM trajectory
-(Rotation is unchanged)
+---
 
-### Step 6: Verify
-Finally, we verify that the measured distance between the matched scaled points is ≈ the known metric value (e.g., 3.7 m).
+## Scale Computation
+
+Given two corresponding 3D SLAM points \( P_1, P_2 \):
+
+\[
+D_{\text{slam}} = \| P_2 - P_1 \|
+\]
+
+\[
+s = \frac{D_{\text{metric}}}{D_{\text{slam}}}
+\]
+
+### Measured Result
+
+From the selected frame:
+
+- \( D_{\text{slam}} \approx 0.288925499 \)
+- \( D_{\text{metric}} = 3.7 \, \text{m} \)
+
+\[
+\boxed{s \approx 12.806069374}
+\]
+
+This scale factor was used for all subsequent scaling.
 
 ---
 
-## Files and What Each One Does
+## Offline Scaling Strategy
 
-### Core run / build
-- `build.sh`  
-Builds ORB-SLAM3 and examples.
+Although online scale logging was implemented inside the Tracking thread, the **final pipeline performs scaling offline** for robustness and determinism.
 
-- `build_ros.sh`  
-ROS build helper (not required for this project’s core flow).
+### Exported (Unscaled)
+- `KeyFrameTrajectory_unscaled.tum`
+- `map_unscaled.ply`
 
-- `CMakeLists.txt`  
-Build configuration (may include minor changes needed for added code).
+### Scaling
+- Map points:
+\[
+P_i' = s \cdot P_i
+\]
+- Camera translations:
+\[
+t' = s \cdot t
+\]
+- Rotations unchanged
 
-### Inputs (your measurement + dataset wrapper)
-- `kitti_wrap_drive_0001/`  
-Dataset wrapper directory expected by `mono_kitti`.
-- `image_0/` images
-- `times.txt` float timestamps (relative seconds)
-
-- `lane_clicks.txt`  
-Your measurement input: frame id + two pixel coordinates + known metric distance.
-
-### Intermediate mapping helpers (frame ↔ time ↔ keyframe)
-These exist to connect a “clicked frame index” to the best matching KeyFrame:
-- `frame_to_timestamp.txt`  
-Maps frame index → timestamp (derived from `times.txt` or run logs).
-
-- `keyframe_to_frame.txt`  
-Maps KeyFrame id → closest frame index (so offline projection uses the correct pose).
-
-- `map_keyframes_to_frames.py`  
-Generates `keyframe_to_frame.txt` using timestamps and trajectory alignment logic.
-
-### Exported outputs (from ORB-SLAM3)
-- `KeyFrameTrajectory.txt` / `KeyFrameTrajectory_unscaled.tum`  
-Unscaled keyframe trajectory (poses in SLAM units).
-
-- `map_unscaled.ply`  
-Unscaled point cloud exported from the map (SLAM units).
-
-### Offline scale computation and scaling
-- `compute_scale_offline.py`  
-Main offline algorithm:
-- loads `map_unscaled.ply`, `KeyFrameTrajectory_unscaled.tum`, `lane_clicks.txt`
-- selects the best KeyFrame for the clicked frame (using mapping files)
-- projects MapPoints into the camera
-- finds the closest projected points to each click
-- computes `D_slam` and scale `s`
-- writes/updates logs as needed
-
-- `apply_scale.py`  
-Applies scale `s` to generate:
+### Final Outputs
 - `KeyFrameTrajectory_scaled.tum`
 - `map_scaled.ply`
 
-- `verify_scaled_distance.py`  
-Verifies the result by measuring the 3D distance in the scaled map between the two matched points. Expected output ~3.7 m (or your chosen metric reference).
+---
 
-### Logs and final products
-- `scale_log.txt`  
-Logs computed scales (either from online logging or offline scripts), useful for debugging and repeatability.
+## Verification
 
-- `KeyFrameTrajectory_scaled.tum`  
-Final scaled trajectory (metric translations).
+After scaling, the distance between the two reconstructed lane boundary points in `map_scaled.ply` was measured:
 
-- `map_scaled.ply`  
-Final scaled point cloud (metric coordinates).
+\[
+D_{\text{measured}} \approx 3.7 \text{ meters}
+\]
 
-### Code changes inside ORB-SLAM3
-Modified files (high level):
-- `src/Tracking.cc`
-- added logic to associate clicked pixels → nearest tracked keypoints → MapPoints
-- included safe snapshotting under map lock (originally for online logging)
-- online scaling/logging can be disabled (offline is the final pipeline)
+confirming correct scale recovery.
 
-- `include/System.h`
-- added a minimal Atlas getter used for exporting map data:
-  ```
-  Atlas* GetAtlasPointer() { return mpAtlas; }
-  ```
+---
 
-- `Examples/Monocular/mono_kitti.cc`
-- exports unscaled map (`map_unscaled.ply`) after shutdown
-- saves keyframe trajectory to TUM format
+## Modified / Added Files
+
+### C++ (ORB-SLAM3)
+- `src/Tracking.cc`  
+  - Pixel → keypoint → MapPoint association  
+  - Safe snapshotting under `Map::mMutexMapUpdate`  
+  - Optional online scale logging
+- `include/System.h`  
+  - Added minimal Atlas getter:
+    ```
+    Atlas* GetAtlasPointer() { return mpAtlas; }
+    ```
+- `Examples/Monocular/mono_kitti.cc`  
+  - Export of unscaled map (`map_unscaled.ply`) after shutdown  
+  - Save keyframe trajectory in TUM format
+
+### Python (Offline Processing)
+- `compute_scale_offline.py` – computes scale from clicks and map
+- `apply_scale.py` – applies scale to trajectory and map
+- `verify_scaled_distance.py` – verifies metric correctness
+- `map_keyframes_to_frames.py` – keyframe ↔ frame association
+- `frame_to_timestamp.txt`, `keyframe_to_frame.txt` – helper mappings
+
+---
 
 ## Running the Full Pipeline
 
 ### 1) Build
-```
+````
 
 cd ORB_SLAM3
 ./build.sh
 
 ```
 
-### 2) Run SLAM (exports unscaled trajectory + map)
+### 2) Run SLAM
 ```
 
 cd ORB_SLAM3
@@ -277,18 +230,17 @@ cd ORB_SLAM3
 
 ```
 
-### 3) Compute scale offline
-Example (adjust to your script arguments):
+### 3) Compute Scale
 ```
 
 python3 compute_scale_offline.py --frame 50 --width_m 3.7
 
 ```
 
-### 4) Apply scale
+### 4) Apply Scale
 ```
 
-python3 apply_scale.py --scale <SCALE_VALUE_FROM_STEP_3>
+python3 apply_scale.py --scale 12.806069374
 
 ```
 
@@ -301,22 +253,22 @@ python3 verify_scaled_distance.py --frame 50
 
 ---
 
-## Notes / Common Issues
+## Notes
 
-### Pangolin/OpenGL hangs
-If the viewer blocks (common on SSH / broken GL), try:
+- Pangolin/OpenGL issues may require:
 ```
 
 export LIBGL_ALWAYS_SOFTWARE=1
 
 ```
-
-### KITTI raw filename formatting
-The `mono_kitti` loader may expect 6-digit names (`000000.png`) while raw images are 10-digit (`0000000000.png`). The wrapper folder must match what the loader expects. This repo uses the wrapper format that successfully runs with the current loader setup.
+- Online scale logging exists but is disabled; offline scaling is the final method.
+- The focus of this project is **correctness, thread safety, and reproducibility**, not real-time performance.
 
 ---
 
 ## Author
+
 Dolev Freund  
 MSc Electrical Engineering (Robotics)  
 GitHub: https://github.com/dolevfr
+```
