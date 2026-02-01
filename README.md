@@ -1,4 +1,3 @@
-```markdown
 # ORB-SLAM3 Monocular Scale Recovery with Thread-Safe Map Access
 
 ## Overview
