@@ -259,19 +259,18 @@ Modified files (high level):
 - exports unscaled map (`map_unscaled.ply`) after shutdown
 - saves keyframe trajectory to TUM format
 
----
-
+```markdown
 ## Running the Full Pipeline (Recommended)
 
-1) Build
-````
+### 1) Build
+```
 
 cd ORB_SLAM3
 ./build.sh
 
 ```
 
-2) Run SLAM (exports unscaled trajectory + map)
+### 2) Run SLAM (exports unscaled trajectory + map)
 ```
 
 cd ORB_SLAM3
@@ -279,7 +278,7 @@ cd ORB_SLAM3
 
 ```
 
-3) Compute scale offline
+### 3) Compute scale offline
 Example (adjust to your script arguments):
 ```
 
@@ -287,14 +286,14 @@ python3 compute_scale_offline.py --frame 50 --width_m 3.7
 
 ```
 
-4) Apply scale
+### 4) Apply scale
 ```
 
 python3 apply_scale.py --scale <SCALE_VALUE_FROM_STEP_3>
 
 ```
 
-5) Verify
+### 5) Verify
 ```
 
 python3 verify_scaled_distance.py --frame 50
@@ -322,3 +321,4 @@ The `mono_kitti` loader may expect 6-digit names (`000000.png`) while raw images
 Dolev Freund  
 MSc Electrical Engineering (Robotics)  
 GitHub: https://github.com/dolevfr
+```
