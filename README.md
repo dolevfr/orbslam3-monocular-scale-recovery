@@ -320,4 +320,3 @@ The `mono_kitti` loader may expect 6-digit names (`000000.png`) while raw images
 Dolev Freund  
 MSc Electrical Engineering (Robotics)  
 GitHub: https://github.com/dolevfr
-```
