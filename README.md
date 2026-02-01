@@ -258,4 +258,3 @@ export LIBGL_ALWAYS_SOFTWARE=1
 Dolev Freund  
 MSc Electrical Engineering (Robotics)  
 GitHub: https://github.com/dolevfr
-```
