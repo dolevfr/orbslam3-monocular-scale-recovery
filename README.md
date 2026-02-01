@@ -1,235 +1,324 @@
-# ORB-SLAM3
+# ORB-SLAM3 Monocular Scale Recovery with Thread-Safe Map Access
 
-### V1.0, December 22th, 2021
-**Authors:** Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, [José M. M. Montiel](http://webdiis.unizar.es/~josemari/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/).
+## Overview
+This project extends ORB-SLAM3 to demonstrate metric scale recovery in monocular SLAM while respecting the system’s multi-threaded map architecture. Monocular SLAM produces a geometrically correct but unitless map; this work recovers a metric scale using user-selected image features with known real-world distances (e.g., standard lane width), evaluated on KITTI.
 
-The [Changelog](https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/master/Changelog.md) describes the features of each version.
+The end result is a **scaled trajectory** and **scaled point cloud**:
+- `KeyFrameTrajectory_scaled.tum`
+- `map_scaled.ply`
 
-ORB-SLAM3 is the first real-time SLAM library able to perform **Visual, Visual-Inertial and Multi-Map SLAM** with **monocular, stereo and RGB-D** cameras, using **pin-hole and fisheye** lens models. In all sensor configurations, ORB-SLAM3 is as robust as the best systems available in the literature, and significantly more accurate. 
+---
 
-We provide examples to run ORB-SLAM3 in the [EuRoC dataset](http://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets) using stereo or monocular, with or without IMU, and in the [TUM-VI dataset](https://vision.in.tum.de/data/datasets/visual-inertial-dataset) using fisheye stereo or monocular, with or without IMU. Videos of some example executions can be found at [ORB-SLAM3 channel](https://www.youtube.com/channel/UCXVt-kXG6T95Z4tVaYlU80Q).
+## What This Project Solves
 
-This software is based on [ORB-SLAM2](https://github.com/raulmur/ORB_SLAM2) developed by [Raul Mur-Artal](http://webdiis.unizar.es/~raulmur/), [Juan D. Tardos](http://webdiis.unizar.es/~jdtardos/), [J. M. M. Montiel](http://webdiis.unizar.es/~josemari/) and [Dorian Galvez-Lopez](http://doriangalvez.com/) ([DBoW2](https://github.com/dorian3d/DBoW2)).
+### 1) Monocular scale ambiguity (unitless map)
+Monocular SLAM cannot recover absolute scale. ORB-SLAM3 outputs a map and poses up to an unknown scale factor `s`:
 
-<a href="https://youtu.be/HyLNq-98LRo" target="_blank"><img src="https://img.youtube.com/vi/HyLNq-98LRo/0.jpg" 
-alt="ORB-SLAM3" width="240" height="180" border="10" /></a>
-
-### Related Publications:
-
-[ORB-SLAM3] Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M. M. Montiel and Juan D. Tardós, **ORB-SLAM3: An Accurate Open-Source Library for Visual, Visual-Inertial and Multi-Map SLAM**, *IEEE Transactions on Robotics 37(6):1874-1890, Dec. 2021*. **[PDF](https://arxiv.org/abs/2007.11898)**.
-
-[IMU-Initialization] Carlos Campos, J. M. M. Montiel and Juan D. Tardós, **Inertial-Only Optimization for Visual-Inertial Initialization**, *ICRA 2020*. **[PDF](https://arxiv.org/pdf/2003.05766.pdf)**
-
-[ORBSLAM-Atlas] Richard Elvira, J. M. M. Montiel and Juan D. Tardós, **ORBSLAM-Atlas: a robust and accurate multi-map system**, *IROS 2019*. **[PDF](https://arxiv.org/pdf/1908.11585.pdf)**.
-
-[ORBSLAM-VI] Raúl Mur-Artal, and Juan D. Tardós, **Visual-inertial monocular SLAM with map reuse**, IEEE Robotics and Automation Letters, vol. 2 no. 2, pp. 796-803, 2017. **[PDF](https://arxiv.org/pdf/1610.05949.pdf)**. 
-
-[Stereo and RGB-D] Raúl Mur-Artal and Juan D. Tardós. **ORB-SLAM2: an Open-Source SLAM System for Monocular, Stereo and RGB-D Cameras**. *IEEE Transactions on Robotics,* vol. 33, no. 5, pp. 1255-1262, 2017. **[PDF](https://arxiv.org/pdf/1610.06475.pdf)**.
-
-[Monocular] Raúl Mur-Artal, José M. M. Montiel and Juan D. Tardós. **ORB-SLAM: A Versatile and Accurate Monocular SLAM System**. *IEEE Transactions on Robotics,* vol. 31, no. 5, pp. 1147-1163, 2015. (**2015 IEEE Transactions on Robotics Best Paper Award**). **[PDF](https://arxiv.org/pdf/1502.00956.pdf)**.
-
-[DBoW2 Place Recognition] Dorian Gálvez-López and Juan D. Tardós. **Bags of Binary Words for Fast Place Recognition in Image Sequences**. *IEEE Transactions on Robotics,* vol. 28, no. 5, pp. 1188-1197, 2012. **[PDF](http://doriangalvez.com/php/dl.php?dlp=GalvezTRO12.pdf)**
-
-# 1. License
-
-ORB-SLAM3 is released under [GPLv3 license](https://github.com/UZ-SLAMLab/ORB_SLAM3/LICENSE). For a list of all code/library dependencies (and associated licenses), please see [Dependencies.md](https://github.com/UZ-SLAMLab/ORB_SLAM3/blob/master/Dependencies.md).
-
-For a closed-source version of ORB-SLAM3 for commercial purposes, please contact the authors: orbslam (at) unizar (dot) es.
-
-If you use ORB-SLAM3 in an academic work, please cite:
-  
-    @article{ORBSLAM3_TRO,
-      title={{ORB-SLAM3}: An Accurate Open-Source Library for Visual, Visual-Inertial 
-               and Multi-Map {SLAM}},
-      author={Campos, Carlos AND Elvira, Richard AND G\´omez, Juan J. AND Montiel, 
-              Jos\'e M. M. AND Tard\'os, Juan D.},
-      journal={IEEE Transactions on Robotics}, 
-      volume={37},
-      number={6},
-      pages={1874-1890},
-      year={2021}
-     }
-
-# 2. Prerequisites
-We have tested the library in **Ubuntu 16.04** and **18.04**, but it should be easy to compile in other platforms. A powerful computer (e.g. i7) will ensure real-time performance and provide more stable and accurate results.
-
-## C++11 or C++0x Compiler
-We use the new thread and chrono functionalities of C++11.
-
-## Pangolin
-We use [Pangolin](https://github.com/stevenlovegrove/Pangolin) for visualization and user interface. Dowload and install instructions can be found at: https://github.com/stevenlovegrove/Pangolin.
-
-## OpenCV
-We use [OpenCV](http://opencv.org) to manipulate images and features. Dowload and install instructions can be found at: http://opencv.org. **Required at leat 3.0. Tested with OpenCV 3.2.0 and 4.4.0**.
-
-## Eigen3
-Required by g2o (see below). Download and install instructions can be found at: http://eigen.tuxfamily.org. **Required at least 3.1.0**.
-
-## DBoW2 and g2o (Included in Thirdparty folder)
-We use modified versions of the [DBoW2](https://github.com/dorian3d/DBoW2) library to perform place recognition and [g2o](https://github.com/RainerKuemmerle/g2o) library to perform non-linear optimizations. Both modified libraries (which are BSD) are included in the *Thirdparty* folder.
-
-## Python
-Required to calculate the alignment of the trajectory with the ground truth. **Required Numpy module**.
-
-* (win) http://www.python.org/downloads/windows
-* (deb) `sudo apt install libpython2.7-dev`
-* (mac) preinstalled with osx
-
-## ROS (optional)
-
-We provide some examples to process input of a monocular, monocular-inertial, stereo, stereo-inertial or RGB-D camera using ROS. Building these examples is optional. These have been tested with ROS Melodic under Ubuntu 18.04.
-
-# 3. Building ORB-SLAM3 library and examples
-
-Clone the repository:
-```
-git clone https://github.com/UZ-SLAMLab/ORB_SLAM3.git ORB_SLAM3
 ```
 
-We provide a script `build.sh` to build the *Thirdparty* libraries and *ORB-SLAM3*. Please make sure you have installed all required dependencies (see section 2). Execute:
+P_metric = s · P_slam
+
 ```
+
+### 2) Thread-safe map access in ORB-SLAM3
+ORB-SLAM3 is multi-threaded. While Tracking runs, the Local Mapper and Loop Closer can modify / optimize / replace / erase MapPoints. Reading 3D map data incorrectly can cause:
+- crashes (reading invalid pointers)
+- inconsistent reads
+- deadlocks (wrong lock ordering)
+
+This project identifies the correct mutex and uses safe access patterns to avoid those issues.
+
+### 3) KITTI Raw vs KITTI Odometry mismatch (the “wrap” problem)
+The ORB-SLAM3 `mono_kitti` example typically expects KITTI **Odometry-style** layout:
+
+```
+
+<sequence>/
+image_0/000000.png ...
+times.txt
+
+```
+
+KITTI Raw is different:
+
+```
+
+.../image_00/data/0000000000.png ...
+.../image_00/timestamps.txt   (date strings)
+
+```
+
+To run without modifying ORB-SLAM3 loaders, we created an **odometry-like wrapper** directory:
+- `kitti_wrap_drive_0001/image_0/` (images)
+- `kitti_wrap_drive_0001/times.txt` (float timestamps, relative seconds)
+
+---
+
+## System Architecture (How ORB-SLAM3 Runs)
+
+ORB-SLAM3 runs multiple threads in parallel:
+
+- **Tracking thread**
+  - reads images
+  - extracts ORB features
+  - matches features
+  - associates keypoints to MapPoints (`Frame::mvpMapPoints`)
+  - creates KeyFrames occasionally
+
+- **Local Mapping thread**
+  - triangulates new MapPoints
+  - runs local bundle adjustment
+  - culls/merges/replaces points
+
+- **Loop Closing thread**
+  - detects loops
+  - applies global pose-graph / optimization (may replace/cull points)
+
+- **Viewer thread (Pangolin)**
+  - visualizes map and camera poses (can hang if OpenGL issues)
+
+The critical consequence:
+> MapPoints can change while Tracking is running, so extracting 3D data must be synchronized.
+
+---
+
+## Thread Safety and Locking Strategy
+
+### The lock that matters
+Map-level updates are protected by:
+- `Map::mMutexMapUpdate` (the main mutex we use to safely snapshot map data)
+
+### Deadlock risk (why we were careful)
+MapPoints also have their own internal mutexes. A common deadlock pattern is:
+- Thread A: lock Map mutex → call MapPoint method (locks MP mutex)
+- Thread B: lock MP mutex → tries to lock Map mutex
+=> deadlock.
+
+### Safe pattern used in this project
+- Lock `Map::mMutexMapUpdate` briefly only to **snapshot/validate pointers**
+- Release map lock
+- Then call `MapPoint->GetWorldPos()` (which may take its own internal lock)
+
+This avoids holding Map and MapPoint locks simultaneously in the wrong order.
+
+---
+
+## Project Flow (Top-to-Bottom)
+
+### Step 0: Build
+```
+
 cd ORB_SLAM3
-chmod +x build.sh
 ./build.sh
-```
-
-This will create **libORB_SLAM3.so**  at *lib* folder and the executables in *Examples* folder.
-
-# 4. Running ORB-SLAM3 with your camera
-
-Directory `Examples` contains several demo programs and calibration files to run ORB-SLAM3 in all sensor configurations with Intel Realsense cameras T265 and D435i. The steps needed to use your own camera are: 
-
-1. Calibrate your camera following `Calibration_Tutorial.pdf` and write your calibration file `your_camera.yaml`
-
-2. Modify one of the provided demos to suit your specific camera model, and build it
-
-3. Connect the camera to your computer using USB3 or the appropriate interface
-
-4. Run ORB-SLAM3. For example, for our D435i camera, we would execute:
 
 ```
-./Examples/Stereo-Inertial/stereo_inertial_realsense_D435i Vocabulary/ORBvoc.txt ./Examples/Stereo-Inertial/RealSense_D435i.yaml
+
+### Step 1: Run ORB-SLAM3 on the wrapper dataset
+This repo includes the wrapper directory inside `ORB_SLAM3` so the run command uses an absolute path:
+
 ```
 
-# 5. EuRoC Examples
-[EuRoC dataset](http://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets) was recorded with two pinhole cameras and an inertial sensor. We provide an example script to launch EuRoC sequences in all the sensor configurations.
+cd ORB_SLAM3
+./Examples/Monocular/mono_kitti 
+Vocabulary/ORBvoc.txt 
+Examples/Monocular/KITTI_image00.yaml 
+/kitti_wrap_drive_0001
 
-1. Download a sequence (ASL format) from http://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets
-
-2. Open the script "euroc_examples.sh" in the root of the project. Change **pathDatasetEuroc** variable to point to the directory where the dataset has been uncompressed. 
-
-3. Execute the following script to process all the sequences with all sensor configurations:
-```
-./euroc_examples
 ```
 
-## Evaluation
-EuRoC provides ground truth for each sequence in the IMU body reference. As pure visual executions report trajectories centered in the left camera, we provide in the "evaluation" folder the transformation of the ground truth to the left camera reference. Visual-inertial trajectories use the ground truth from the dataset.
-
-Execute the following script to process sequences and compute the RMS ATE:
-```
-./euroc_eval_examples
+Notes:
+- If Pangolin/OpenGL hangs, you can test software rendering:
 ```
 
-# 6. TUM-VI Examples
-[TUM-VI dataset](https://vision.in.tum.de/data/datasets/visual-inertial-dataset) was recorded with two fisheye cameras and an inertial sensor.
+export LIBGL_ALWAYS_SOFTWARE=1
 
-1. Download a sequence from https://vision.in.tum.de/data/datasets/visual-inertial-dataset and uncompress it.
-
-2. Open the script "tum_vi_examples.sh" in the root of the project. Change **pathDatasetTUM_VI** variable to point to the directory where the dataset has been uncompressed. 
-
-3. Execute the following script to process all the sequences with all sensor configurations:
-```
-./tum_vi_examples
 ```
 
-## Evaluation
-In TUM-VI ground truth is only available in the room where all sequences start and end. As a result the error measures the drift at the end of the sequence. 
+### Step 2: Export unscaled trajectory + map
+After shutdown, the modified example exports:
+- `KeyFrameTrajectory_unscaled.tum`
+- `map_unscaled.ply`
 
-Execute the following script to process sequences and compute the RMS ATE:
+These are in SLAM (unitless) scale.
+
+### Step 3: Provide reference measurement (pixels + known metric distance)
+You manually pick two pixels in a chosen frame where the real-world distance is known.
+
+Examples of allowed reference distances:
+- Standard lane width: **3.7 m**
+- Dashed line length: **3.0 m**
+- Sedan wheelbase: **2.7 m**
+
+These clicks are stored in:
+- `lane_clicks.txt`
+
+### Step 4: Offline scale computation (robust + deterministic)
+We compute the scale factor offline using exported map + trajectory:
+- project MapPoints into the chosen camera/keyframe
+- find the two MapPoints whose projections match the clicked pixels
+- compute:
 ```
-./tum_vi_eval_examples
+
+D_slam = ||P2 - P1||
+s = D_metric / D_slam
+
+````
+
+### Step 5: Apply scale to trajectory and point cloud
+Scale is applied to:
+- all MapPoint coordinates in PLY
+- translation component of poses in TUM trajectory
+(Rotation is unchanged)
+
+### Step 6: Verify
+Finally, we verify that the measured distance between the matched scaled points is ≈ the known metric value (e.g., 3.7 m).
+
+---
+
+## Files and What Each One Does
+
+### Core run / build
+- `build.sh`  
+Builds ORB-SLAM3 and examples.
+
+- `build_ros.sh`  
+ROS build helper (not required for this project’s core flow).
+
+- `CMakeLists.txt`  
+Build configuration (may include minor changes needed for added code).
+
+### Inputs (your measurement + dataset wrapper)
+- `kitti_wrap_drive_0001/`  
+Dataset wrapper directory expected by `mono_kitti`.
+- `image_0/` images
+- `times.txt` float timestamps (relative seconds)
+
+- `lane_clicks.txt`  
+Your measurement input: frame id + two pixel coordinates + known metric distance.
+
+### Intermediate mapping helpers (frame ↔ time ↔ keyframe)
+These exist to connect a “clicked frame index” to the best matching KeyFrame:
+- `frame_to_timestamp.txt`  
+Maps frame index → timestamp (derived from `times.txt` or run logs).
+
+- `keyframe_to_frame.txt`  
+Maps KeyFrame id → closest frame index (so offline projection uses the correct pose).
+
+- `map_keyframes_to_frames.py`  
+Generates `keyframe_to_frame.txt` using timestamps and trajectory alignment logic.
+
+### Exported outputs (from ORB-SLAM3)
+- `KeyFrameTrajectory.txt` / `KeyFrameTrajectory_unscaled.tum`  
+Unscaled keyframe trajectory (poses in SLAM units).
+
+- `map_unscaled.ply`  
+Unscaled point cloud exported from the map (SLAM units).
+
+### Offline scale computation and scaling
+- `compute_scale_offline.py`  
+Main offline algorithm:
+- loads `map_unscaled.ply`, `KeyFrameTrajectory_unscaled.tum`, `lane_clicks.txt`
+- selects the best KeyFrame for the clicked frame (using mapping files)
+- projects MapPoints into the camera
+- finds the closest projected points to each click
+- computes `D_slam` and scale `s`
+- writes/updates logs as needed
+
+- `apply_scale.py`  
+Applies scale `s` to generate:
+- `KeyFrameTrajectory_scaled.tum`
+- `map_scaled.ply`
+
+- `verify_scaled_distance.py`  
+Verifies the result by measuring the 3D distance in the scaled map between the two matched points. Expected output ~3.7 m (or your chosen metric reference).
+
+### Logs and final products
+- `scale_log.txt`  
+Logs computed scales (either from online logging or offline scripts), useful for debugging and repeatability.
+
+- `KeyFrameTrajectory_scaled.tum`  
+Final scaled trajectory (metric translations).
+
+- `map_scaled.ply`  
+Final scaled point cloud (metric coordinates).
+
+### Code changes inside ORB-SLAM3
+Modified files (high level):
+- `src/Tracking.cc`
+- added logic to associate clicked pixels → nearest tracked keypoints → MapPoints
+- included safe snapshotting under map lock (originally for online logging)
+- online scaling/logging can be disabled (offline is the final pipeline)
+
+- `include/System.h`
+- added a minimal Atlas getter used for exporting map data:
+  ```
+  Atlas* GetAtlasPointer() { return mpAtlas; }
+  ```
+
+- `Examples/Monocular/mono_kitti.cc`
+- exports unscaled map (`map_unscaled.ply`) after shutdown
+- saves keyframe trajectory to TUM format
+
+---
+
+## Running the Full Pipeline (Recommended)
+
+1) Build
+````
+
+cd ORB_SLAM3
+./build.sh
+
 ```
 
-# 7. ROS Examples
+2) Run SLAM (exports unscaled trajectory + map)
+```
 
-### Building the nodes for mono, mono-inertial, stereo, stereo-inertial and RGB-D
-Tested with ROS Melodic and ubuntu 18.04.
+cd ORB_SLAM3
+./Examples/Monocular/mono_kitti Vocabulary/ORBvoc.txt Examples/Monocular/KITTI_image00.yaml /kitti_wrap_drive_0001
 
-1. Add the path including *Examples/ROS/ORB_SLAM3* to the ROS_PACKAGE_PATH environment variable. Open .bashrc file:
-  ```
-  gedit ~/.bashrc
-  ```
-and add at the end the following line. Replace PATH by the folder where you cloned ORB_SLAM3:
+```
 
-  ```
-  export ROS_PACKAGE_PATH=${ROS_PACKAGE_PATH}:PATH/ORB_SLAM3/Examples/ROS
-  ```
-  
-2. Execute `build_ros.sh` script:
+3) Compute scale offline
+Example (adjust to your script arguments):
+```
 
-  ```
-  chmod +x build_ros.sh
-  ./build_ros.sh
-  ```
-  
-### Running Monocular Node
-For a monocular input from topic `/camera/image_raw` run node ORB_SLAM3/Mono. You will need to provide the vocabulary file and a settings file. See the monocular examples above.
+python3 compute_scale_offline.py --frame 50 --width_m 3.7
 
-  ```
-  rosrun ORB_SLAM3 Mono PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE
-  ```
+```
 
-### Running Monocular-Inertial Node
-For a monocular input from topic `/camera/image_raw` and an inertial input from topic `/imu`, run node ORB_SLAM3/Mono_Inertial. Setting the optional third argument to true will apply CLAHE equalization to images (Mainly for TUM-VI dataset).
+4) Apply scale
+```
 
-  ```
-  rosrun ORB_SLAM3 Mono PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE [EQUALIZATION]	
-  ```
+python3 apply_scale.py --scale <SCALE_VALUE_FROM_STEP_3>
 
-### Running Stereo Node
-For a stereo input from topic `/camera/left/image_raw` and `/camera/right/image_raw` run node ORB_SLAM3/Stereo. You will need to provide the vocabulary file and a settings file. For Pinhole camera model, if you **provide rectification matrices** (see Examples/Stereo/EuRoC.yaml example), the node will recitify the images online, **otherwise images must be pre-rectified**. For FishEye camera model, rectification is not required since system works with original images:
+```
 
-  ```
-  rosrun ORB_SLAM3 Stereo PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE ONLINE_RECTIFICATION
-  ```
+5) Verify
+```
 
-### Running Stereo-Inertial Node
-For a stereo input from topics `/camera/left/image_raw` and `/camera/right/image_raw`, and an inertial input from topic `/imu`, run node ORB_SLAM3/Stereo_Inertial. You will need to provide the vocabulary file and a settings file, including rectification matrices if required in a similar way to Stereo case:
+python3 verify_scaled_distance.py --frame 50
 
-  ```
-  rosrun ORB_SLAM3 Stereo_Inertial PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE ONLINE_RECTIFICATION [EQUALIZATION]	
-  ```
-  
-### Running RGB_D Node
-For an RGB-D input from topics `/camera/rgb/image_raw` and `/camera/depth_registered/image_raw`, run node ORB_SLAM3/RGBD. You will need to provide the vocabulary file and a settings file. See the RGB-D example above.
+```
 
-  ```
-  rosrun ORB_SLAM3 RGBD PATH_TO_VOCABULARY PATH_TO_SETTINGS_FILE
-  ```
+---
 
-**Running ROS example:** Download a rosbag (e.g. V1_02_medium.bag) from the EuRoC dataset (http://projects.asl.ethz.ch/datasets/doku.php?id=kmavvisualinertialdatasets). Open 3 tabs on the terminal and run the following command at each tab for a Stereo-Inertial configuration:
-  ```
-  roscore
-  ```
-  
-  ```
-  rosrun ORB_SLAM3 Stereo_Inertial Vocabulary/ORBvoc.txt Examples/Stereo-Inertial/EuRoC.yaml true
-  ```
-  
-  ```
-  rosbag play --pause V1_02_medium.bag /cam0/image_raw:=/camera/left/image_raw /cam1/image_raw:=/camera/right/image_raw /imu0:=/imu
-  ```
-  
-Once ORB-SLAM3 has loaded the vocabulary, press space in the rosbag tab.
+## Notes / Common Issues
 
-**Remark:** For rosbags from TUM-VI dataset, some play issue may appear due to chunk size. One possible solution is to rebag them with the default chunk size, for example:
-  ```
-  rosrun rosbag fastrebag.py dataset-room1_512_16.bag dataset-room1_512_16_small_chunks.bag
-  ```
+### Pangolin/OpenGL hangs
+If the viewer blocks (common on SSH / broken GL), try:
+```
 
-# 8. Running time analysis
-A flag in `include\Config.h` activates time measurements. It is necessary to uncomment the line `#define REGISTER_TIMES` to obtain the time stats of one execution which is shown at the terminal and stored in a text file(`ExecTimeMean.txt`).
+export LIBGL_ALWAYS_SOFTWARE=1
 
-# 9. Calibration
-You can find a tutorial for visual-inertial calibration and a detailed description of the contents of valid configuration files at  `Calibration_Tutorial.pdf`
+```
+
+### KITTI raw filename formatting
+The `mono_kitti` loader may expect 6-digit names (`000000.png`) while raw images are 10-digit (`0000000000.png`). The wrapper folder must match what the loader expects. This repo uses the wrapper format that successfully runs with the current loader setup.
+
+---
+
+## Author
+Dolev Freund  
+MSc Electrical Engineering (Robotics)  
+GitHub: https://github.com/dolevfr
