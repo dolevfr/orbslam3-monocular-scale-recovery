@@ -1,3 +1,4 @@
+
 # ORB-SLAM3 Monocular Scale Recovery with Thread-Safe Map Access
 
 ## Overview
@@ -160,7 +161,6 @@ This avoids holding the map mutex while invoking MapPoint methods that acquire t
     Atlas* GetAtlasPointer() { return mpAtlas; }
     ```
 
-```markdown
 - **`Examples/Monocular/mono_kitti.cc`**
   - Exports unscaled map to `map_unscaled.ply` after shutdown
   - Saves keyframe trajectory in TUM format
